@@ -4,12 +4,17 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use url::Url;
+
 mod domain;
 use domain::*;
 
+mod errors;
+use errors::*;
+
 #[derive(PartialEq, Debug)]
 enum ProcessStatus {
-    Error(String),
+    Pending,
+    Error,
     Complete,
 }
 
@@ -21,69 +26,68 @@ pub struct Index {
 pub async fn process_request(
     req: web::Json<Index>,
     data: web::Data<Mutex<AppState>>,
-) -> HttpResponse {
-    println!("this stuff ==> {:?}", req.domain);
+) -> Result<HttpResponse, AppError> {
+    let domain = Url::parse(&req.domain).map_err(|e| AppError::BadRequest(e.to_string()))?;
+    let cloned = domain.as_str().to_owned();
+
+    let init = reqwest::get(domain.as_str())
+        .await
+        .map_err(|e| AppError::InternalServerError(e.to_string()))?
+        .text()
+        .await
+        .map_err(|e| AppError::InternalServerError(e.to_string()))?;
 
     actix_rt::spawn(async move {
-        let mut data = data.lock().unwrap();
+        let d = domain.as_str();
 
-        let init = reqwest::get("www.rust-lang.org")
-            .await
-            .unwrap()
-            .text()
-            .await;
+        let indexables = process_domain_links(init.as_str(), d).await;
 
-        println!("{}", init.unwrap());
-
-        let origin = check_protocol("https://www.rust-lang.org".to_owned());
-        let domain = Url::parse(&origin);
-        let origin = domain.unwrap().host().unwrap().to_string();
-
-        // let u = process_domain_links(init.unwrap().as_str(), origin).await;
-        // let o = u.unwrap();
-        let o = vec!["https://"];
-        // println!("got links {:?}", o);
-        // //////////
-        // let p = stream::iter(o)
-        //     .map(|url| async move {
-        //         // println!("url ==> {}", url);
-        //         match reqwest::get(&url).await {
-        //             Ok(r) => (url, r.status().to_string()),
-        //             Err(e) => (url, format!("Error {}", e.to_string())),
-        //         }
-        //     })
-        //     .buffer_unordered(10)
-        //     .collect::<Vec<(String, String)>>()
-        //     .await;
-        // data.results.insert(String::from("rust-lang.org"), p);
-        // data.status
-        //     .insert(String::from("rust-lang.org"), ProcessStatus::Complete);
+        if let Ok(mut state) = data.lock() {
+            state.status.insert(d.to_string(), ProcessStatus::Pending);
+            let results = stream::iter(indexables)
+                .map(|url| async move {
+                    match reqwest::get(&url).await {
+                        Ok(r) => (url, r.status().to_string()),
+                        Err(e) => (url, format!("Http error{}", e.to_string())),
+                    }
+                })
+                .buffer_unordered(50)
+                .collect::<Vec<(String, String)>>()
+                .await;
+            println!("finished... {}", &d);
+            state.results.insert(d.to_string(), results);
+            state.status.insert(d.to_string(), ProcessStatus::Complete);
+        }
     });
 
-    return HttpResponse::Accepted().body("Processing....");
+    return Ok(HttpResponse::Accepted().body(format!("Processing.... {}", cloned)));
 }
 
-async fn shorter_request(data: web::Data<Mutex<AppState>>) -> HttpResponse {
-    println!("shorter requests");
-    // let d = data.lock();
-    if let Ok(d) = data.lock() {
-        if let Some(s) = d.status.get("rust-lang.org") {
-            if *s == ProcessStatus::Complete {
-                let results = d.results.get("rust-lang.org").unwrap().clone();
-                return HttpResponse::Ok().json(results);
-            }
+async fn get_results(
+    req: web::Query<Index>,
+    data: web::Data<Mutex<AppState>>,
+) -> Result<HttpResponse, AppError> {
+    let data = data
+        .lock()
+        .map_err(|e| AppError::InternalServerError(e.to_string()))?;
+
+    let s = data
+        .status
+        .get(&req.domain)
+        .unwrap_or(&ProcessStatus::Error);
+
+    if matches!(*s, ProcessStatus::Complete) {
+        let scraping_results = data.results.get(&req.domain);
+        if scraping_results.is_some() {
+            return Ok(HttpResponse::Ok().json(scraping_results.clone()));
+        } else {
+            return Err(AppError::InternalServerError(format!(
+                "Unable to retrieve key for {}",
+                &req.domain
+            )));
         }
-    };
-    return HttpResponse::Ok().body("Processing....");
-}
-
-fn check_protocol(org: String) -> String {
-    if !org.contains("https://") {
-        let mut u = String::from("https://");
-        u.push_str(&org.to_string());
-        return u;
     }
-    org
+    return Ok(HttpResponse::Ok().body(format!("Status for {} - {:?}", &req.domain, &s)));
 }
 
 #[derive(Debug)]
@@ -109,9 +113,7 @@ async fn main() -> std::io::Result<()> {
         App::new()
             .app_data(data.clone())
             .route("/process", web::post().to(process_request))
-            .route("/shorter_request", web::get().to(shorter_request))
-
-        // .app_data(data.clone())
+            .route("/results", web::get().to(get_results))
     })
     .bind(("127.0.0.1", 8080))?
     .run()
