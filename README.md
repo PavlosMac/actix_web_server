@@ -1,10 +1,9 @@
 # Actix Web Crawler
 
-- Exposing two endpoints, one to run a heavy IO task for domain link scraping, one to return results as list.
+- Exposes two endpoints, one to run a heavy IO task for domain link scraping, one to return results by target.
 - Uses in-memory HashMap to persist global state.
-- Should return HttpResponse or HttpResponseError.
+- Will return HttpResponse or HttpResponseError.
 
-## Useage:
 
 Start server:
 
