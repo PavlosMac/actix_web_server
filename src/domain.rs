@@ -7,7 +7,7 @@ const PROTOCOL: &str = "https://";
 pub fn check_protocol(org: String) -> String {
     if !org.contains(PROTOCOL) {
         let mut u = String::from(PROTOCOL);
-        u.push_str(&org.to_string());
+        u.push_str(&org);
         return u;
     }
     org
@@ -25,7 +25,7 @@ pub async fn process_domain_links(res: &str, org: &str) -> Vec<String> {
 // /// loop links from domain, if link is path only, append domain, if link base is substring add as indexable
 fn parse_links(base: &str, links: HashSet<String>) -> Vec<String> {
     let mut indexables = Vec::new();
-    for mut link in links {
+    for link in links {
         if link.starts_with('/') {
             let noramlized_url = format!("https://{}{}", base, &link);
             indexables.push(noramlized_url);

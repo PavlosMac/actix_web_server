@@ -1,9 +1,10 @@
 use actix_web::{web, App, HttpResponse, HttpServer};
 use futures::{stream, StreamExt};
+use log::info;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
+use std::sync::Mutex;
 use url::Url;
 
 mod domain;
@@ -67,8 +68,6 @@ pub async fn process_request(
             _ => "",
         };
         let indexables = process_domain_links(init.as_str(), host_base).await;
-        let key = host_base.to_owned();
-
         if let Ok(mut state) = data.lock() {
             state
                 .status
@@ -78,13 +77,14 @@ pub async fn process_request(
                 .map(|url| async move {
                     match reqwest::get(&url).await {
                         Ok(r) => (url, r.status().to_string()),
-                        Err(e) => (url, format!("Http error{}", e.to_string())),
+                        Err(e) => (url, format!("Http error: {}", e)),
                     }
                 })
                 .buffer_unordered(50)
                 .collect::<Vec<(String, String)>>()
                 .await;
-            results.push((String::from("Index Count"), results.len().to_string()));
+            info!("Processing complete for {}", &host_base);
+            results.push((String::from("Indexed Count"), results.len().to_string()));
 
             state.results.insert(host_base.to_string(), results);
             state
@@ -92,7 +92,7 @@ pub async fn process_request(
                 .insert(host_base.to_string(), ProcessStatus::Complete);
         }
     });
-    return Ok(HttpResponse::Accepted().body("Processing new entity..."));
+    Ok(HttpResponse::Accepted().body("Processing new entity..."))
 }
 /// GET request route handler, open global lock, check for results of domain processing, return AppError or HttpResponse Ok with results as Vec<(T,T)>
 async fn get_results(
@@ -111,7 +111,7 @@ async fn get_results(
     if matches!(*s, ProcessStatus::Complete) {
         let scraping_results = data.results.get(&req.domain);
         if scraping_results.is_some() {
-            return Ok(HttpResponse::Ok().json(scraping_results.clone()));
+            return Ok(HttpResponse::Ok().json(scraping_results));
         } else {
             return Err(AppError::InternalServerError(format!(
                 "Unable to retrieve key for {}",
@@ -119,13 +119,14 @@ async fn get_results(
             )));
         }
     }
-    return Ok(HttpResponse::Ok().body(format!("Status for {} - {:?}", &req.domain, &s)));
+    Ok(HttpResponse::Ok().body(format!("Status for {} - {:?}", &req.domain, &s)))
 }
 
 #[actix_rt::main]
 async fn main() -> std::io::Result<()> {
     let data = web::Data::new(Mutex::new(AppState::default()));
-
+    env_logger::init();
+    info!("....Start Actix Web Server....");
     HttpServer::new(move || {
         App::new()
             .app_data(data.clone())
