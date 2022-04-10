@@ -27,8 +27,7 @@ fn parse_links(base: &str, links: HashSet<String>) -> Vec<String> {
     let mut indexables = Vec::new();
     for mut link in links {
         if link.starts_with('/') {
-            link.remove(0);
-            let noramlized_url = format!("{}{}", base, &link);
+            let noramlized_url = format!("https://{}{}", base, &link);
             indexables.push(noramlized_url);
             continue;
         }
@@ -42,40 +41,43 @@ fn parse_links(base: &str, links: HashSet<String>) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    // use httpmock::prelude::*;
+    use url::Url;
 
     #[test]
     fn test_check_protocol() {
         let arg_str = String::from("blog.com");
-
         assert_eq!(check_protocol(arg_str), String::from("https://blog.com"));
+
+        let arg_str_2 = String::from("https://anotherblog.com");
+        assert_eq!(
+            check_protocol(arg_str_2),
+            String::from("https://anotherblog.com")
+        );
     }
 
-    // #[test]
-    // fn test_check_protocol() {
-    //     let arg_tes1 = String::from("https://blog.com");
+    #[tokio::test]
+    async fn test_process_domain_links() {
+        let doc_string = "<div><ul><li><a href='https://www.linkedin.com/company/github'></a></li><li><a href='/github/path_2'></a></li></ul>";
+        let r = process_domain_links(doc_string, "sombase.com").await;
+        assert_eq!(r.len(), 2);
+    }
 
-    //     assert_eq!(check_protocol(String::from("https://blog.com")), arg_tes1);
-    //     assert_eq!(check_protocol(String::from("blog.com")), arg_tes1);
-    // }
+    #[test]
+    fn test_parse_links() {
+        let mut set = HashSet::new();
+        set.insert("example-base.com".to_owned());
+        set.insert("/path/path".to_owned());
+        set.insert("https://external.org/page-1".to_owned());
+        set.insert("https://example-base.com/some-path".to_owned());
 
-    // #[test]
-    // fn test_parse_links() {
-    //     let mut set = HashSet::new();
-    //     set.insert("example-base.com".to_owned());
-    //     set.insert("/path/path".to_owned());
-    //     set.insert("/example/path".to_owned());
-    //     set.insert("https://example-base.com".to_owned());
-    //     let results = parse_links("example-base.com".to_owned(), set);
-    //     let filtered = results
-    //         .into_iter()
-    //         .map(|s| check_protocol(s))
-    //         .filter(|it| {
-    //             let r = Regex::new(r"^(https)://+example-base.com+([a-zA-Z0-9\\/]*)$");
-    //             r.unwrap().is_match(it)
-    //         })
-    //         .collect::<Vec<String>>();
+        let results = parse_links("example-base.com", set);
 
-    //     assert_eq!(filtered.len(), 4);
-    // }
+        let filtered = results
+            .into_iter()
+            .map(|s| check_protocol(s))
+            .filter(|it| Url::parse(it).is_ok())
+            .collect::<Vec<String>>();
+
+        assert_eq!(filtered.len(), 3);
+    }
 }
