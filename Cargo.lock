@@ -190,6 +190,7 @@ dependencies = [
  "actix-web",
  "derive_more",
  "futures",
+ "regex",
  "reqwest",
  "select",
  "serde",

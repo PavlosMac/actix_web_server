@@ -1,5 +1,6 @@
-use actix_web::{dev::ResourceDef, web, App, HttpRequest, HttpResponse, HttpServer, Responder};
+use actix_web::{web, App, HttpResponse, HttpServer};
 use futures::{stream, StreamExt};
+use regex::Regex;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -17,34 +18,63 @@ enum ProcessStatus {
     Error,
     Complete,
 }
+#[derive(Debug)]
+pub struct AppState {
+    results: HashMap<String, Vec<(String, String)>>,
+    status: HashMap<String, ProcessStatus>,
+}
 
+impl AppState {
+    fn default() -> Self {
+        Self {
+            results: HashMap::new(),
+            status: HashMap::new(),
+        }
+    }
+}
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Index {
     domain: String,
 }
-
+/// POST request route handler, parse as domain using regex, add protocol, parse as Url
+/// request page doc, spawn new futures thread for parallel bulky IO, save state to global AppState in HashMap
 pub async fn process_request(
     req: web::Json<Index>,
     data: web::Data<Mutex<AppState>>,
 ) -> Result<HttpResponse, AppError> {
-    let domain = Url::parse(&req.domain).map_err(|e| AppError::BadRequest(e.to_string()))?;
-    let cloned = domain.as_str().to_owned();
+    let r = Regex::new(r"^[a-z0-9]+([\-\.]{1}[a-z0-9]+)*\.[a-z]{2,7}$").unwrap();
+    if !r.is_match(&req.domain) {
+        return Err(AppError::BadRequest(format!(
+            "Invalid domain: {}",
+            &req.domain
+        )));
+    };
+    let with_proto = check_protocol(String::from(&req.domain));
+    let url = Url::parse(with_proto.as_str()).map_err(|e| AppError::BadRequest(e.to_string()))?;
 
-    let init = reqwest::get(domain.as_str())
+    let init = reqwest::get(url.as_str())
         .await
         .map_err(|e| AppError::InternalServerError(e.to_string()))?
         .text()
         .await
         .map_err(|e| AppError::InternalServerError(e.to_string()))?;
 
-    actix_rt::spawn(async move {
-        let d = domain.as_str();
+    let host = url.to_owned();
 
-        let indexables = process_domain_links(init.as_str(), d).await;
+    actix_rt::spawn(async move {
+        let host_base = match host.host_str() {
+            Some(v) => v,
+            _ => "",
+        };
+        let indexables = process_domain_links(init.as_str(), host_base).await;
+        let key = host_base.to_owned();
 
         if let Ok(mut state) = data.lock() {
-            state.status.insert(d.to_string(), ProcessStatus::Pending);
-            let results = stream::iter(indexables)
+            state
+                .status
+                .insert(host_base.to_string(), ProcessStatus::Pending);
+
+            let mut results = stream::iter(indexables)
                 .map(|url| async move {
                     match reqwest::get(&url).await {
                         Ok(r) => (url, r.status().to_string()),
@@ -54,15 +84,17 @@ pub async fn process_request(
                 .buffer_unordered(50)
                 .collect::<Vec<(String, String)>>()
                 .await;
-            println!("finished... {}", &d);
-            state.results.insert(d.to_string(), results);
-            state.status.insert(d.to_string(), ProcessStatus::Complete);
+            results.push((String::from("Index Count"), results.len().to_string()));
+
+            state.results.insert(host_base.to_string(), results);
+            state
+                .status
+                .insert(host_base.to_string(), ProcessStatus::Complete);
         }
     });
-
-    return Ok(HttpResponse::Accepted().body(format!("Processing.... {}", cloned)));
+    return Ok(HttpResponse::Accepted().body("Processing new entity..."));
 }
-
+/// GET request route handler, open global lock, check for results of domain processing, return AppError or HttpResponse Ok with results as Vec<(T,T)>
 async fn get_results(
     req: web::Query<Index>,
     data: web::Data<Mutex<AppState>>,
@@ -88,21 +120,6 @@ async fn get_results(
         }
     }
     return Ok(HttpResponse::Ok().body(format!("Status for {} - {:?}", &req.domain, &s)));
-}
-
-#[derive(Debug)]
-pub struct AppState {
-    results: HashMap<String, Vec<(String, String)>>,
-    status: HashMap<String, ProcessStatus>,
-}
-
-impl AppState {
-    fn default() -> Self {
-        Self {
-            results: HashMap::new(),
-            status: HashMap::new(),
-        }
-    }
 }
 
 #[actix_rt::main]
