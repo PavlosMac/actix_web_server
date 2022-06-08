@@ -4,7 +4,6 @@
 - Uses in-memory HashMap to persist global state.
 - Will return HttpResponse or HttpResponseError.
 
-
 Start server:
 
 ```sh
@@ -18,12 +17,18 @@ Send POST request with domain target:
 --url http://localhost:8080/process \
 --header 'content-type: application/json' \
 --data '{
-        "domain": "github.com"
+        "domain": "playbuzz.com"
 }'
 ```
 
 GET request for results retrieval by target:
 
 ```sh
-> curl -i --request GET http://localhost:8080/results\?domain=github.com'
+> curl -i --request GET http://localhost:8080/results\?domain=playbuzz.com'
 ```
+
+Features:
+
+- retrieve all internal links from initial page scrape
+- list results with reponse Status Code under HashMap key
+- retrieve with /results endpoint. Use initial processing string

@@ -1,9 +1,9 @@
+use log::info;
 use select::{document::Document, predicate::Name};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 const PROTOCOL: &str = "https://";
 
-/// append protocol on origin for http client
 pub fn check_protocol(org: String) -> String {
     if !org.contains(PROTOCOL) {
         let mut u = String::from(PROTOCOL);
@@ -19,7 +19,44 @@ pub async fn process_domain_links(res: &str, org: &str) -> Vec<String> {
         .filter_map(|n| n.attr("href"))
         .map(|n| n.to_owned())
         .collect::<HashSet<String>>();
-    parse_links(org, links)
+    let parsed = parse_links(org, links);
+    return parsed;
+}
+
+pub async fn do_request(u: &str) -> String {
+    let init = reqwest::get(u).await.unwrap().text().await;
+    if let Ok(page) = init {
+        page
+    } else {
+        String::from("Request error.")
+    }
+}
+
+pub async fn do_urls(url: &str, host: &str) -> HashSet<String> {
+    let init = do_request(url).await;
+    let host_key = host.to_string();
+    let first_page = process_domain_links(init.as_str(), host).await;
+    let mut storage: HashMap<String, Vec<String>> = HashMap::new();
+    storage.insert(host_key, first_page);
+
+    let mut unprocessed = storage.keys().cloned().collect::<Vec<String>>();
+
+    while let Some(key) = unprocessed.pop() {
+        let v = storage.get(&key).unwrap().clone();
+
+        for u in v {
+            if !storage.contains_key(&u) && u.contains(host) {
+                let d = do_request(&u).await;
+                let list = process_domain_links(&d, host).await;
+                let url: String = u.to_owned();
+                storage.insert(url.clone(), list);
+                info!("{}....unprocessed", url);
+                unprocessed.push(url);
+            }
+        }
+    }
+    let v: HashSet<String> = storage.into_values().flatten().collect();
+    v
 }
 
 // /// loop links from domain, if link is path only, append domain, if link base is substring add as indexable

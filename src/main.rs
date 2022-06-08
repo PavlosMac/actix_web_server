@@ -1,7 +1,6 @@
 use actix_web::{web, App, HttpResponse, HttpServer};
 use futures::{stream, StreamExt};
 use log::info;
-use regex::Regex;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Mutex;
@@ -43,22 +42,9 @@ pub async fn process_request(
     req: web::Json<Index>,
     data: web::Data<Mutex<AppState>>,
 ) -> Result<HttpResponse, AppError> {
-    let r = Regex::new(r"^[a-z0-9]+([\-\.]{1}[a-z0-9]+)*\.[a-z]{2,7}$").unwrap();
-    if !r.is_match(&req.domain) {
-        return Err(AppError::BadRequest(format!(
-            "Invalid domain: {}",
-            &req.domain
-        )));
-    };
     let with_proto = check_protocol(String::from(&req.domain));
-    let url = Url::parse(with_proto.as_str()).map_err(|e| AppError::BadRequest(e.to_string()))?;
-
-    let init = reqwest::get(url.as_str())
-        .await
-        .map_err(|e| AppError::InternalServerError(e.to_string()))?
-        .text()
-        .await
-        .map_err(|e| AppError::InternalServerError(e.to_string()))?;
+    info!("With protocol {}", with_proto);
+    let url = Url::parse(with_proto.as_str()).unwrap();
 
     let host = url.to_owned();
 
@@ -67,32 +53,34 @@ pub async fn process_request(
             Some(v) => v,
             _ => "",
         };
-        let indexables = process_domain_links(init.as_str(), host_base).await;
+        let page_results = do_urls(with_proto.as_str(), host_base).await;
+        info!("Indexing {} number of domain urls.", page_results.len());
+        let cloned_key = req.domain.to_owned();
         if let Ok(mut state) = data.lock() {
-            state
-                .status
-                .insert(host_base.to_string(), ProcessStatus::Pending);
+            state.status.insert(cloned_key, ProcessStatus::Pending);
 
-            let mut results = stream::iter(indexables)
+            let mut results = stream::iter(page_results)
                 .map(|url| async move {
                     match reqwest::get(&url).await {
-                        Ok(r) => (url, r.status().to_string()),
+                        Ok(r) => {
+                            info!("Request complete for url: {}", &url);
+                            (url, r.status().to_string())
+                        }
                         Err(e) => (url, format!("Http error: {}", e)),
                     }
                 })
                 .buffer_unordered(50)
                 .collect::<Vec<(String, String)>>()
                 .await;
-            info!("Processing complete for {}", &host_base);
+            info!("Processing complete for {}", &req.domain);
             results.push((String::from("Indexed Count"), results.len().to_string()));
-
-            state.results.insert(host_base.to_string(), results);
+            state.results.insert(String::from(&req.domain), results);
             state
                 .status
-                .insert(host_base.to_string(), ProcessStatus::Complete);
+                .insert(String::from(&req.domain), ProcessStatus::Complete);
         }
     });
-    Ok(HttpResponse::Accepted().body("Processing new entity..."))
+    Ok(HttpResponse::Accepted().body("Processing entity..."))
 }
 /// GET request route handler, open global lock, check for results of domain processing, return AppError or HttpResponse Ok with results as Vec<(T,T)>
 async fn get_results(
