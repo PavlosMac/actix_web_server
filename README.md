@@ -10,7 +10,7 @@ Start server:
 > RUST_LOG=info cargo run
 ```
 
-Send POST request with domain target:
+POST request with domain target:
 
 ```sh
 > curl -i --request POST \
@@ -30,5 +30,8 @@ GET request for results retrieval by target:
 Features:
 
 - retrieve all internal links from initial page scrape
-- list results with reponse Status Code under HashMap key
+- scrape subsequent pages returned
+- collect all scraped links
+- index each link with its StatusCode after processed
+- include index count (number of urls tested) for initial page given
 - retrieve with /results endpoint. Use initial processing string
