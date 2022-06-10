@@ -1,6 +1,5 @@
 use actix_web::{error::ResponseError, HttpResponse};
 use derive_more::Display;
-// use url::ParseError;
 
 #[derive(Display, Debug)]
 pub enum AppError {

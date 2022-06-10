@@ -33,5 +33,5 @@ Features:
 - scrape subsequent pages returned
 - collect all scraped links
 - index each link with its StatusCode after processed
-- include index count (number of urls tested) for initial page given
+- include final index count (total number of urls tested)
 - retrieve with /results endpoint. Use initial processing string

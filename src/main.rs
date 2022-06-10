@@ -23,7 +23,7 @@ pub struct AppState {
     results: HashMap<String, Vec<(String, String)>>,
     status: HashMap<String, ProcessStatus>,
 }
-
+/// Shared between route handlers
 impl AppState {
     fn default() -> Self {
         Self {
@@ -36,8 +36,8 @@ impl AppState {
 pub struct Index {
     domain: String,
 }
-/// POST request route handler, parse as domain using regex, add protocol, parse as Url
-/// request page doc, spawn new futures thread for parallel bulky IO, save state to global AppState in HashMap
+/// POST request route handler
+/// spawn new futures thread for parallel IO, threadsafe with Mutex
 pub async fn process_request(
     req: web::Json<Index>,
     data: web::Data<Mutex<AppState>>,
@@ -109,7 +109,7 @@ async fn get_results(
     }
     Ok(HttpResponse::Ok().body(format!("Status for {} - {:?}", &req.domain, &s)))
 }
-
+/// Http server factory
 #[actix_rt::main]
 async fn main() -> std::io::Result<()> {
     let data = web::Data::new(Mutex::new(AppState::default()));
